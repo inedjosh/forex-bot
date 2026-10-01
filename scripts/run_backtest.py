@@ -59,7 +59,7 @@ def main() -> int:
 
     strategy = get_strategy(args.strategy)
     engine = BacktestEngine(
-        risk_config=RiskConfig(starting_balance=args.balance, risk_pct=args.risk_pct),
+        risk_config=RiskConfig.from_env(starting_balance=args.balance, risk_pct=args.risk_pct),
         spread=args.spread,
     )
     result = engine.run(strategy, candles)

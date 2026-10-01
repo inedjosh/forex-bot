@@ -112,10 +112,11 @@ class LiveTrader:
         if self.broker.has_open_position(self.instrument):
             return  # one position at a time; broker manages its SL/TP
 
-        if self.risk.trading_halted_for_day(latest.time.date()):
-            log.warning("Daily loss limit hit — no new trades today.")
+        halt = self.risk.halt_reason(latest.time.date())
+        if halt:
+            log.warning("Trading paused: %s", halt)
             if not self._halt_notified:
-                self._alert(f"{self.instrument}: daily loss limit hit, trading paused for today.")
+                self._alert(f"{self.instrument}: trading paused for today, {halt}.")
                 self._halt_notified = True
             return
         self._halt_notified = False  # reset once a new day / no longer halted
@@ -137,6 +138,7 @@ class LiveTrader:
             return
 
         order_id = self.broker.place_order(self.instrument, order)
+        self.risk.on_trade_opened(latest.time.date())
         log.info("Placed order %s: %s %.0f units (%s)",
                  order_id, order.side.value, order.units, order.reason)
         self._alert(

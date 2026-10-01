@@ -130,6 +130,8 @@ class BacktestEngine:
                     signal = strategy.on_candle(candle, history, None)
                     if signal is not None:
                         position = self._open(signal, candle, risk)
+                        if position is not None:
+                            risk.on_trade_opened(candle.time.date())
 
             # 3) Mark-to-market equity for the drawdown curve.
             unrealized = position.unrealized_pnl(candle.close) if position else 0.0

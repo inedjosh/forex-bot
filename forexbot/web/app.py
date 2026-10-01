@@ -44,9 +44,18 @@ SETTINGS = [
      "help": "Extra cushion beyond the sweep wick for the stop-loss, as a % of price. 0 = stop exactly at the wick."},
     # ── Account & risk ──
     {"key": "RISK_PCT", "group": "Account & risk", "label": "Risk per trade (%)", "kind": "float", "default": 1.0,
-     "help": "How much of the account to put at risk on one trade. Keep small, 0.5% to 2%."},
+     "help": "Most you can lose on ONE trade, as a % of the account. Keep small: 0.5% to 2%."},
     {"key": "STARTING_BALANCE", "group": "Account & risk", "label": "Practice balance ($)", "kind": "float", "default": 10000,
      "help": "The pretend account size used for backtests/practice. Not real money."},
+    # ── Loss protection (your safety net) ──
+    {"key": "MAX_DAILY_LOSS_PCT", "group": "Loss protection", "label": "Max daily loss (%)", "kind": "float", "default": 3.0,
+     "help": "If the account is down this % on the day, the bot STOPS trading until tomorrow. This is your hard floor."},
+    {"key": "DAILY_PROFIT_TARGET_PCT", "group": "Loss protection", "label": "Daily profit target (%)", "kind": "float", "default": 0.0,
+     "help": "Once up this % on the day, the bot stops and locks in the win. 0 = keep trading all day."},
+    {"key": "MAX_TRADES_PER_DAY", "group": "Loss protection", "label": "Max trades per day", "kind": "int", "default": 0,
+     "help": "Stop after this many trades in a day (prevents over-trading). 0 = no limit."},
+    {"key": "MAX_CONSECUTIVE_LOSSES", "group": "Loss protection", "label": "Stop after losses in a row", "kind": "int", "default": 0,
+     "help": "After this many losing trades back-to-back, pause for the day. 0 = off."},
 ]
 
 
@@ -332,10 +341,7 @@ def create_app():
         if len(candles) < 50:
             return jsonify({"ok": False, "error": "not enough candles"}), 400
 
-        engine = BacktestEngine(risk_config=RiskConfig(
-            starting_balance=env_float("STARTING_BALANCE", 10_000.0),
-            risk_pct=env_float("RISK_PCT", 1.0),
-        ))
+        engine = BacktestEngine(risk_config=RiskConfig.from_env())
         try:
             result = engine.run(get_strategy(strategy_name), candles)
         except Exception as exc:  # noqa: BLE001 , surface formula errors to the UI
@@ -379,10 +385,7 @@ def create_app():
         else:
             candles = synthetic_candles(n=3000, seed=42)
 
-        ranked = grid_search(candles, risk_config=RiskConfig(
-            starting_balance=env_float("STARTING_BALANCE", 10_000.0),
-            risk_pct=env_float("RISK_PCT", 1.0),
-        ))
+        ranked = grid_search(candles, risk_config=RiskConfig.from_env())
         valid = [r for r in ranked if r.score != float("-inf")][:10]
         rows = [{
             "params": pr.params,

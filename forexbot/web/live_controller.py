@@ -129,9 +129,7 @@ class LiveController:
             trader = LiveTrader(
                 broker=self.broker,
                 strategy=get_strategy(env_str("STRATEGY", "crt")),
-                risk_config=RiskConfig(
-                    starting_balance=self.start_balance,
-                    risk_pct=env_float("RISK_PCT", 1.0)),
+                risk_config=RiskConfig.from_env(starting_balance=self.start_balance),
                 instrument=self.instrument,
                 granularity=env_str("GRANULARITY", "D"),
                 dry_run=self.dry_run,
