@@ -531,26 +531,21 @@ def create_app():
 
     @app.get("/api/live-status")
     def live_status():
-        """Report whether the bot is ready to paper/live trade (broker configured?)."""
-        mt5_configured = all(env_str(k, "") for k in
-                             ("MT5_LOGIN", "MT5_PASSWORD", "MT5_SERVER"))
+        """Report whether THIS user is ready to live-trade (their broker connected?)."""
+        s = auth.get_settings(session.get("email", "")) or {}
+        mt5_configured = bool(s.get("mt5_login") and s.get("mt5_password") and s.get("mt5_server"))
         try:
             import MetaTrader5  # noqa: F401
             mt5_available = True
         except Exception:  # noqa: BLE001 — Windows-only package; absent on Mac
             mt5_available = False
-        alerts = []
-        if env_str("TELEGRAM_BOT_TOKEN", "") and env_str("TELEGRAM_CHAT_ID", ""):
-            alerts.append("telegram")
-        if env_str("SMTP_HOST", "") and env_str("ALERT_EMAIL_TO", ""):
-            alerts.append("email")
         return jsonify({
             "mt5_configured": mt5_configured,
             "mt5_available": mt5_available,
-            "instrument": env_str("INSTRUMENT", "EURUSD"),
+            "instrument": s.get("instrument") or env_str("INSTRUMENT", "EURUSD"),
             "granularity": env_str("GRANULARITY", "D"),
-            "alerts": alerts,
-            "server": env_str("MT5_SERVER", ""),
+            "alerts": (["telegram"] if s.get("telegram_chat_id") else []),
+            "server": s.get("mt5_server", ""),
         })
 
     # ── Auto-resume live trading after a restart / VPS reboot ──────────────────
