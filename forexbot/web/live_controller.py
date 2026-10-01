@@ -62,7 +62,11 @@ class LiveController:
               telegram_chat_id: str | None = None):
         self.telegram_chat_id = telegram_chat_id
         if self.running:
-            return False, "A run is already in progress. Stop it first."
+            # Switching modes (e.g. dry-run -> real): stop the current run first, then start.
+            self._stop.set()
+            if self._thread is not None:
+                self._thread.join(timeout=15)
+            self.running = False
 
         self.logs.clear()
         self.error = None
