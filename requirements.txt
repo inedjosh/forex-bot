@@ -1,0 +1,17 @@
+# The core (indicators, backtest engine, live loop, sim broker) has ZERO hard
+# dependencies — it runs on the standard library alone. Everything below is optional.
+
+# Free real historical data for backtesting (no account, works everywhere):
+yfinance>=0.2
+
+# Equity-curve plots (scripts/run_backtest.py --plot):
+matplotlib>=3.7
+
+# Local web UI (scripts/run_ui.py):
+flask>=3.0
+
+# Live trading (choose one when ready):
+#   MetaTrader 5 broker (accepts Nigeria; Windows/VPS only):
+# MetaTrader5>=5.0
+#   OANDA (NOT available in Nigeria):
+# oandapyV20>=0.7.2

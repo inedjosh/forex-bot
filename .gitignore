@@ -1,0 +1,14 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+.DS_Store
+config.yaml
+.env
+!.env.example
+users.db
+.flask_secret
+*.log
+data/*.csv
+!data/.gitkeep
+.pytest_cache/
