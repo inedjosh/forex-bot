@@ -869,7 +869,13 @@ _INDEX_HTML = r"""<!doctype html>
   button.big { width:100%; padding:15px; font-size:15px; margin-top:6px; }
   button.ghost { background:#fff; border:1px solid #d1d5da; color:var(--ink); }
   button.ghost:hover { background:#f6f6f6; }
-  button:disabled { opacity:.45; cursor:default; }
+  button:disabled { opacity:.6; cursor:default; }
+  @keyframes fxspin { to { transform: rotate(360deg); } }
+  .spin { display:inline-block; width:13px; height:13px; border:2px solid rgba(255,255,255,.45);
+    border-top-color:#fff; border-radius:50%; animation:fxspin .7s linear infinite;
+    vertical-align:-2px; margin-right:7px; }
+  .spin.dark { border-color:rgba(0,0,0,.2); border-top-color:var(--accent); }
+  .loading { color:var(--muted); font-size:13px; padding:10px 0; }
   .hint { font-size:12.5px; color:var(--muted); margin-top:8px; }
 
   /* Info marker + tooltip (functional, needed for the hover help) */
@@ -1221,6 +1227,12 @@ const TIP = {
 
 function toast(msg){ const t=$("#toast"); t.textContent=msg; t.classList.add("show");
   setTimeout(()=>t.classList.remove("show"), 2400); }
+function busy(btn, label){ if(!btn) return; btn.disabled=true; btn.dataset.orig=btn.innerHTML;
+  const dark = btn.classList.contains("ghost") ? " dark" : "";
+  btn.innerHTML = `<span class="spin${dark}"></span>${label||"Working..."}`; }
+function unbusy(btn){ if(!btn) return; btn.disabled=false;
+  if(btn.dataset.orig!=null){ btn.innerHTML=btn.dataset.orig; } }
+function loadingBox(el, msg){ if(el) el.innerHTML = `<div class="loading"><span class="spin dark"></span>${msg||"Loading..."}</div>`; }
 
 function opts(sel, arr, sel0){ sel.innerHTML=""; arr.forEach(v=>{ const o=document.createElement("option");
   o.value=v; o.textContent=v; if(v===sel0)o.selected=true; sel.appendChild(o); }); }
@@ -1319,8 +1331,8 @@ async function reloadState(){ STATE = await (await fetch("/api/state")).json(); 
 $("#refreshBtn").onclick = async ()=>{ await reloadState(); toast("Data list refreshed"); };
 
 $("#fetchBtn").onclick = async ()=>{
-  const b=$("#fetchBtn"); b.disabled=true; b.textContent="Downloading…";
-  const st=$("#fetchStatus"); st.innerHTML="";
+  const b=$("#fetchBtn"); busy(b,"Downloading...");
+  const st=$("#fetchStatus"); loadingBox(st, "Fetching real market prices...");
   // Yahoo only serves ~2 years of intraday history , warn before trying.
   const iv=$("#interval").value, pd=$("#period").value;
   if(iv!=="1d" && ["5y","10y"].includes(pd)){
@@ -1339,7 +1351,7 @@ $("#fetchBtn").onclick = async ()=>{
       st.innerHTML=`<div class="warn">Couldn't download: ${r.error}</div>`;
     }
   } catch(e){ st.innerHTML=`<div class="warn">Download failed: ${e}</div>`; }
-  finally { b.disabled=false; b.textContent="Download"; }
+  finally { unbusy(b); }
 };
 
 async function saveFormula(){
@@ -1347,9 +1359,11 @@ async function saveFormula(){
     body:JSON.stringify(gatherFormula())});
 }
 $("#saveBtn").onclick = async ()=>{
-  await saveFormula();
-  const st=$("#formulaStatus"); st.style.color="var(--good)"; st.textContent="Formula saved.";
-  toast("Formula saved");
+  const b=$("#saveBtn"); busy(b,"Saving...");
+  try{ await saveFormula();
+    const st=$("#formulaStatus"); st.style.color="var(--good)"; st.textContent="Formula saved.";
+    toast("Formula saved");
+  } finally { unbusy(b); }
 };
 $("#resetBtn").onclick = async ()=>{
   const defaults={}; STATE.settings.forEach(s=> defaults[s.key]=String(s.default ?? ""));
@@ -1365,13 +1379,14 @@ function stat(label, val, tipKey, cls){
 }
 
 $("#btBtn").onclick = async ()=>{
-  const b=$("#btBtn"); b.disabled=true; b.textContent="Running…";
+  const b=$("#btBtn"); busy(b,"Running the test...");
+  loadingBox($("#btOut"), "Crunching the numbers...");
   try{
     // Save the formula form first, so the test uses exactly what's on screen.
     await saveFormula();
     const r = await (await fetch("/api/backtest",{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({file:$("#btFile").value, strategy:$("#btStrategy").value})})).json();
-    if(!r.ok){ toast("Error: "+r.error); return; }
+    if(!r.ok){ toast("Error: "+r.error); $("#btOut").innerHTML=`<div class="warn">${r.error}</div>`; return; }
     const s=r.result; const good=s.net_pnl>=0; const cls=good?"good":"bad";
     const verdict = good
       ? `On this past data, these rules <b>made money</b> (+$${s.net_pnl}).`
@@ -1389,15 +1404,17 @@ $("#btBtn").onclick = async ()=>{
       </div>
       <div class="hint">Tested on ${s.source}, ${s.candles} price bars, practice balance $${s.start_balance} to $${s.end_balance}</div>
       ${r.has_image?`<img src="/api/equity.png?t=${Date.now()}" alt="account balance over time"/>`:""}`;
-  } finally { b.disabled=false; b.textContent="Run the Test"; }
+  } catch(e){ toast("Error running test"); $("#btOut").innerHTML=""; }
+  finally { unbusy(b); }
 };
 
 $("#optBtn").onclick = async ()=>{
-  const b=$("#optBtn"); b.disabled=true; b.textContent="Searching…";
+  const b=$("#optBtn"); busy(b,"Searching...");
+  loadingBox($("#optOut"), "Trying many settings, this can take a moment...");
   try{
     const r = await (await fetch("/api/optimize",{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({file:$("#optFile").value})})).json();
-    if(!r.ok){ toast("Error: "+r.error); return; }
+    if(!r.ok){ toast("Error: "+r.error); $("#optOut").innerHTML=`<div class="warn">${r.error}</div>`; return; }
     if(!r.rows.length){ $("#optOut").innerHTML="<div class='hint'>No setting made enough trades to judge. Try more history.</div>"; return; }
     let html = "<table><tr><th>Settings it tried</th><th>Profit/Loss</th><th>Profit factor</th><th>Win%</th><th>Trades</th></tr>";
     r.rows.forEach(row=>{
@@ -1415,7 +1432,8 @@ $("#optBtn").onclick = async ()=>{
       $("#formula").scrollIntoView({behavior:"smooth"});
       toast("Filled into Step 4, review, then Run the Test");
     };
-  } finally { b.disabled=false; b.textContent="Find Best Settings"; }
+  } catch(e){ toast("Error"); $("#optOut").innerHTML=""; }
+  finally { unbusy(b); }
 };
 
 // ── Mode switcher (Backtest / Practice / Live) ──
@@ -1435,6 +1453,7 @@ document.querySelectorAll(".tab").forEach(t=>t.onclick=()=>{
 });
 
 async function loadHistory(){
+  loadingBox($("#histTable"), "Loading your trades...");
   // Show the CURRENT open trade (if any) at the top, pulled from the live run.
   let openHtml="";
   try{
@@ -1482,29 +1501,35 @@ async function loadAccount(){
   }catch(e){}
 }
 $("#pwSave").onclick=async ()=>{
-  const r=await (await fetch("/api/my-password",{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({current:$("#pwCur").value, new:$("#pwNew").value})})).json();
-  const st=$("#pwStatus");
-  if(r.ok){ st.style.color="var(--good)"; st.textContent="Password updated.";
-    $("#pwCur").value=""; $("#pwNew").value=""; toast("Password updated"); }
-  else { st.style.color="var(--bad)"; st.textContent=r.error; }
+  const b=$("#pwSave"); busy(b,"Updating...");
+  try{
+    const r=await (await fetch("/api/my-password",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({current:$("#pwCur").value, new:$("#pwNew").value})})).json();
+    const st=$("#pwStatus");
+    if(r.ok){ st.style.color="var(--good)"; st.textContent="Password updated.";
+      $("#pwCur").value=""; $("#pwNew").value=""; toast("Password updated"); }
+    else { st.style.color="var(--bad)"; st.textContent=r.error; }
+  } finally { unbusy(b); }
 };
 
 $("#mbSave").onclick=async ()=>{
-  const body={mt5_login:$("#mb_login").value, mt5_server:$("#mb_server").value,
-    telegram_chat_id:$("#mb_telegram").value};
-  const pw=$("#mb_password").value; if(pw) body.mt5_password=pw;
-  await fetch("/api/my-broker",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-  $("#mbStatus").textContent="Saved."; toast("Broker details saved"); loadAccount();
+  const b=$("#mbSave"); busy(b,"Saving...");
+  try{
+    const body={mt5_login:$("#mb_login").value, mt5_server:$("#mb_server").value,
+      telegram_chat_id:$("#mb_telegram").value};
+    const pw=$("#mb_password").value; if(pw) body.mt5_password=pw;
+    await fetch("/api/my-broker",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    $("#mbStatus").textContent="Saved."; toast("Broker details saved"); loadAccount();
+  } finally { unbusy(b); }
 };
 $("#tgTest").onclick=async ()=>{
-  const b=$("#tgTest"); b.disabled=true; b.textContent="Sending...";
+  const b=$("#tgTest"); busy(b,"Sending...");
   try{
     const r=await (await fetch("/api/test-telegram",{method:"POST"})).json();
     const st=$("#mbStatus");
     if(r.ok){ st.style.color="var(--good)"; st.textContent="Test alert sent, check Telegram."; toast("Sent"); }
     else { st.style.color="var(--bad)"; st.textContent=r.error; toast("Not sent"); }
-  } finally { b.disabled=false; b.textContent="Send test Telegram alert"; }
+  } finally { unbusy(b); }
 };
 
 function fillPracFiles(){
@@ -1593,11 +1618,15 @@ function startPolling(elId){
 
 // ── Practice controls ──
 $("#pracStart").onclick=async ()=>{
-  if(ROLE==="admin") await saveFormula();  // admins may have tweaked the formula
-  const r=await (await fetch("/api/live/start",{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({mode:"practice", file:$("#pracFile").value, tick:parseFloat($("#pracTick").value)})})).json();
-  if(!r.ok){ toast(r.message||"Could not start"); return; }
-  toast("Practice started"); startPolling("pracPanel");
+  const b=$("#pracStart"); busy(b,"Starting...");
+  loadingBox($("#pracPanel"), "Starting the simulator...");
+  try{
+    if(ROLE==="admin") await saveFormula();  // admins may have tweaked the formula
+    const r=await (await fetch("/api/live/start",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({mode:"practice", file:$("#pracFile").value, tick:parseFloat($("#pracTick").value)})})).json();
+    if(!r.ok){ toast(r.message||"Could not start"); $("#pracPanel").innerHTML=`<div class="warn">${r.message||"Could not start"}</div>`; return; }
+    toast("Practice started"); startPolling("pracPanel");
+  } finally { unbusy(b); }
 };
 $("#pracStop").onclick=async ()=>{ await fetch("/api/live/stop",{method:"POST"}); toast("Stopping..."); };
 
@@ -1618,11 +1647,15 @@ async function checkLiveReady(){
 $("#liveStart").onclick=async ()=>{
   const dry=$("#liveDry").value==="true";
   if(!dry && !confirm("This will place REAL orders on your broker account. Continue?")) return;
-  if(ROLE==="admin") await saveFormula();
-  const r=await (await fetch("/api/live/start",{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({mode:"live", dry_run:dry})})).json();
-  if(!r.ok){ $("#livePanel").innerHTML=`<div class="warn">${r.message}</div>`; toast("Could not start"); return; }
-  toast("Live started"); startPolling("livePanel");
+  const b=$("#liveStart"); busy(b,"Connecting to MT5...");
+  loadingBox($("#livePanel"), "Connecting to your broker...");
+  try{
+    if(ROLE==="admin") await saveFormula();
+    const r=await (await fetch("/api/live/start",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({mode:"live", dry_run:dry})})).json();
+    if(!r.ok){ $("#livePanel").innerHTML=`<div class="warn">${r.message}</div>`; toast("Could not start"); return; }
+    toast("Live started"); startPolling("livePanel");
+  } finally { unbusy(b); }
 };
 $("#liveStop").onclick=async ()=>{ await fetch("/api/live/stop",{method:"POST"}); toast("Stopping..."); };
 
