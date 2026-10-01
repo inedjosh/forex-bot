@@ -25,7 +25,8 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from ..config import env_float, env_int, env_str
+from ..config import env_bool, env_float, env_int, env_str
+from ..core.indicators import ema
 from ..core.strategy import Strategy
 from ..core.types import Candle, Position, Side, Signal
 
@@ -40,6 +41,8 @@ class CrtStrategy(Strategy):
         risk_reward: Optional[float] = None,
         stop_buffer_pct: Optional[float] = None,
         min_rr: Optional[float] = None,
+        trend_filter: Optional[bool] = None,
+        trend_period: Optional[int] = None,
     ) -> None:
         # How many prior candles form the range (1 = the single previous candle).
         self.range_lookback = range_lookback if range_lookback is not None else env_int("CRT_RANGE_LOOKBACK", 1)
@@ -50,6 +53,15 @@ class CrtStrategy(Strategy):
         self.stop_buffer_pct = stop_buffer_pct if stop_buffer_pct is not None else env_float("CRT_STOP_BUFFER_PCT", 0.0)
         # Skip setups whose reward:risk (to the range target) is below this.
         self.min_rr = min_rr if min_rr is not None else env_float("CRT_MIN_RR", 1.0)
+        # Evidence-based upgrade: only trade WITH the dominant trend (trend-following is
+        # the most robust edge). Only take longs above the trend line, shorts below it.
+        self.trend_filter = trend_filter if trend_filter is not None else env_bool("CRT_TREND_FILTER", True)
+        self.trend_period = trend_period if trend_period is not None else env_int("CRT_TREND_PERIOD", 50)
+        self._trend = None  # filled by prepare()
+
+    def prepare(self, candles: List[Candle]) -> None:
+        if self.trend_filter:
+            self._trend = ema(self.closes(candles), self.trend_period)
 
     def on_candle(
         self,
@@ -74,8 +86,20 @@ class CrtStrategy(Strategy):
         price = candle.close
         buf = self.stop_buffer_pct / 100.0
 
+        # Dominant-trend direction (trade WITH it). None = no filter / not enough data.
+        trend_up = trend_down = True
+        if self.trend_filter:
+            if self._trend is None:
+                self.prepare(history)
+            i = len(history) - 1
+            tv = self._trend[i] if (self._trend and i < len(self._trend)) else None
+            if tv is None:
+                return None
+            trend_up = price > tv     # only longs in an uptrend
+            trend_down = price < tv   # only shorts in a downtrend
+
         # ── BUY: swept below the range low, then reclaimed (closed back inside) ──
-        if candle.low < range_low and price > range_low:
+        if trend_up and candle.low < range_low and price > range_low:
             sl = candle.low * (1.0 - buf)
             risk = price - sl
             if risk <= 0:
@@ -87,7 +111,7 @@ class CrtStrategy(Strategy):
                           reason="CRT: swept low, reclaimed")
 
         # ── SELL: swept above the range high, then reclaimed (closed back inside) ──
-        if candle.high > range_high and price < range_high:
+        if trend_down and candle.high > range_high and price < range_high:
             sl = candle.high * (1.0 + buf)
             risk = sl - price
             if risk <= 0:

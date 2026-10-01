@@ -41,6 +41,7 @@ def _default_grid() -> Dict[str, Sequence]:
         "target_mode": ["range", "rr"],
         "risk_reward": [1.5, 2.0, 3.0],
         "min_rr": [1.0, 1.5, 2.0],
+        "trend_filter": [True, False],
     }
 
 

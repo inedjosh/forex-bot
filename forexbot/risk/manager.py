@@ -24,7 +24,8 @@ class RiskConfig:
     fixed_units: float = 1_000.0
     # Guards (0 = disabled)
     max_open_positions: int = 1
-    max_daily_loss_pct: float = 3.0       # stop for the day after losing this % of balance
+    max_daily_loss_pct: float = 0.8       # stop for the day after losing this % (≈20%/month)
+    max_monthly_loss_pct: float = 20.0    # HARD cap: stop for the month after losing this %
     daily_profit_target_pct: float = 0.0  # stop for the day once up this % (lock in gains)
     max_trades_per_day: int = 0           # stop after this many trades in a day
     max_consecutive_losses: int = 0       # stop for the day after this many losses in a row
@@ -38,7 +39,8 @@ class RiskConfig:
             starting_balance=(starting_balance if starting_balance is not None
                               else env_float("STARTING_BALANCE", 10_000.0)),
             risk_pct=(risk_pct if risk_pct is not None else env_float("RISK_PCT", 1.0)),
-            max_daily_loss_pct=env_float("MAX_DAILY_LOSS_PCT", 3.0),
+            max_daily_loss_pct=env_float("MAX_DAILY_LOSS_PCT", 0.8),
+            max_monthly_loss_pct=env_float("MAX_MONTHLY_LOSS_PCT", 20.0),
             daily_profit_target_pct=env_float("DAILY_PROFIT_TARGET_PCT", 0.0),
             max_trades_per_day=env_int("MAX_TRADES_PER_DAY", 0),
             max_consecutive_losses=env_int("MAX_CONSECUTIVE_LOSSES", 0),
@@ -53,22 +55,33 @@ class RiskManager:
         self.balance = config.starting_balance
         self._day: Optional[date] = None
         self._day_start_balance = config.starting_balance
+        self._month: Optional[tuple] = None
+        self._month_start_balance = config.starting_balance
         self._trades_today = 0
         self._consecutive_losses = 0
 
-    # ── daily tracking ──────────────────────────────────────────────────────
+    # ── daily / monthly tracking ─────────────────────────────────────────────
     def _roll_day(self, today: date) -> None:
         if self._day != today:
             self._day = today
             self._day_start_balance = self.balance
             self._trades_today = 0
             self._consecutive_losses = 0
+        ym = (today.year, today.month)
+        if self._month != ym:
+            self._month = ym
+            self._month_start_balance = self.balance
 
     def halt_reason(self, today: date) -> Optional[str]:
         """Return why trading is paused today, or None if it's allowed."""
         self._roll_day(today)
         c = self.config
         change = self.balance - self._day_start_balance  # +profit / -loss today
+        # Monthly hard cap first — the real guarantee.
+        if c.max_monthly_loss_pct > 0:
+            m_limit = self._month_start_balance * (c.max_monthly_loss_pct / 100.0)
+            if (self._month_start_balance - self.balance) >= m_limit:
+                return f"monthly loss limit hit ({c.max_monthly_loss_pct}%), paused until next month"
         if c.max_daily_loss_pct > 0:
             limit = self._day_start_balance * (c.max_daily_loss_pct / 100.0)
             if -change >= limit:
