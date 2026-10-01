@@ -55,16 +55,37 @@ class Mt5Broker(Broker):
             ) from exc
 
         self._mt5 = mt5
-        # Recommended sequence: start/attach the terminal, THEN log in. Doing both in
-        # initialize() fails on some terminals, so we separate them for reliability.
-        if not mt5.initialize():
-            raise RuntimeError(f"MT5 initialize() failed: {mt5.last_error()}. "
-                               f"Is the MetaTrader 5 terminal installed and running?")
-        if not mt5.login(int(login), password=password, server=server):
-            err = mt5.last_error()
-            mt5.shutdown()
-            raise RuntimeError(f"MT5 login failed for {server}: {err}. "
-                               f"Check login/password/server are exactly as in the terminal.")
+
+        # The Python bridge needs terminal64.exe. initialize() without a path often
+        # can't find it, so try the known install locations explicitly (this also
+        # launches the terminal headlessly). Set MT5_TERMINAL_PATH to override.
+        import os
+        from ..config import env_str
+        candidates = [
+            env_str("MT5_TERMINAL_PATH", ""),
+            r"C:\Program Files\MetaTrader 5\terminal64.exe",
+            r"C:\Program Files (x86)\MetaTrader 5\terminal64.exe",
+            os.path.expandvars(r"%APPDATA%\MetaQuotes\Terminal\terminal64.exe"),
+        ]
+        connected = False
+        last = None
+        for path in candidates:
+            if path and os.path.exists(path):
+                if mt5.initialize(path=path, login=int(login), password=password,
+                                  server=server, timeout=60000):
+                    connected = True
+                    break
+                last = mt5.last_error()
+        if not connected:
+            # Last resort: let the package auto-detect.
+            if mt5.initialize(login=int(login), password=password, server=server, timeout=60000):
+                connected = True
+            else:
+                last = mt5.last_error()
+        if not connected:
+            raise RuntimeError(
+                f"Could not start MetaTrader 5: {last}. The terminal may not be installed "
+                f"on the server. Install it, or set MT5_TERMINAL_PATH to terminal64.exe.")
         self.deviation = deviation
         self.magic = magic
         self._last_deal_time = 0  # for drain_closed_trades
