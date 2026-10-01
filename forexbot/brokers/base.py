@@ -35,6 +35,11 @@ class Broker(ABC):
         """Return a dict describing the open position, or None. Optional for adapters."""
         return None
 
+    def open_positions(self, instrument=None) -> list:
+        """Return a list of ALL currently-open positions (dicts). Default: the single one."""
+        p = self.position_info(instrument)
+        return [p] if p else []
+
     def drain_closed_trades(self) -> list:
         """Return trades that closed since the last call (and clear them). Optional."""
         return []

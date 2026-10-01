@@ -144,12 +144,29 @@ class Mt5Broker(Broker):
         side = "BUY" if p.type == self._mt5.POSITION_TYPE_BUY else "SELL"
         return {
             "side": side,
+            "symbol": p.symbol,
             "units": round(float(p.volume) * 100_000),  # lots -> units for display
             "entry": round(float(p.price_open), 5),
             "stop": round(float(p.sl), 5),
             "target": (round(float(p.tp), 5) if p.tp else None),
             "unrealized": round(float(p.profit), 2),
         }
+
+    def open_positions(self, instrument=None) -> list:
+        positions = (self._mt5.positions_get() if instrument is None
+                     else self._mt5.positions_get(symbol=instrument))
+        out = []
+        for p in positions or []:
+            side = "BUY" if p.type == self._mt5.POSITION_TYPE_BUY else "SELL"
+            out.append({
+                "side": side, "symbol": p.symbol,
+                "units": round(float(p.volume) * 100_000),
+                "entry": round(float(p.price_open), 5),
+                "stop": round(float(p.sl), 5),
+                "target": (round(float(p.tp), 5) if p.tp else None),
+                "unrealized": round(float(p.profit), 2),
+            })
+        return out
 
     def place_order(self, instrument: str, order: Order) -> str:
         mt5 = self._mt5

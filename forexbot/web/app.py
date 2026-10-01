@@ -1439,12 +1439,14 @@ async function loadHistory(){
   let openHtml="";
   try{
     const st=await (await fetch("/api/live/state")).json();
-    const p=st.position;
-    if(p){ const uc=(p.unrealized||0)>=0?"good":"bad";
-      openHtml=`<div class="verdict" style="border-left-color:#137333">
-        <b>Open now:</b> ${p.side} ${p.units} ${st.instrument||""} @ ${p.entry},
-        stop ${p.stop}, target ${p.target??"none"},
-        <span class="${uc}">unrealized ${p.unrealized>=0?"+":""}${p.unrealized}</span></div>`;
+    const ps=st.positions||(st.position?[st.position]:[]);
+    if(ps.length){
+      openHtml=`<div class="verdict" style="border-left-color:#137333"><b>Open now (${ps.length}):</b>`+
+        ps.map(p=>{const uc=(p.unrealized||0)>=0?"good":"bad";
+          return `<div style="padding:3px 0">${p.side} ${p.units} ${p.symbol||st.instrument||""} @ ${p.entry}, `+
+            `stop ${p.stop}, target ${p.target??"none"}, `+
+            `<span class="${uc}">${p.unrealized>=0?"+":""}${p.unrealized}</span></div>`;}).join("")+
+        `</div>`;
     } else if(st.running){ openHtml=`<div class="hint">No open trade right now (bot is running, waiting for a setup).</div>`; }
   }catch(e){}
   const r=await (await fetch("/api/my-history")).json();
@@ -1518,10 +1520,13 @@ let pollTimer=null, pollTarget=null;
 function renderPanel(el, s){
   const on=s.running;
   const pnlCls=s.pnl>=0?"good":"bad";
-  let pos='<span class="hint">No open position right now.</span>';
-  if(s.position){ const p=s.position; const uc=p.unrealized>=0?"good":"bad";
-    pos=`<b>${p.side}</b> ${p.units} units at ${p.entry}, stop ${p.stop}, target ${p.target??"none"}, `+
-        `<span class="${uc}">unrealized ${p.unrealized>=0?"+":""}$${p.unrealized}</span>`; }
+  const ps=s.positions||(s.position?[s.position]:[]);
+  let pos = ps.length ? ps.map(p=>{ const uc=(p.unrealized||0)>=0?"good":"bad";
+      return `<div style="padding:4px 0">`+
+        `<b>${p.side}</b> ${p.units} ${p.symbol||s.instrument} @ ${p.entry}, `+
+        `stop ${p.stop}, target ${p.target??"none"}, `+
+        `<span class="${uc}">unrealized ${p.unrealized>=0?"+":""}$${p.unrealized}</span></div>`;
+    }).join("") : '<span class="hint">No open trades right now.</span>';
   el.innerHTML=`
     <div class="statusbar">
       <span class="dot ${on?"on":(s.finished?"off":"")}"></span>
@@ -1543,7 +1548,7 @@ function renderPanel(el, s){
         <span><i style="background:#137333"></i>take-profit</span>
       </div>
     </div>
-    <div style="margin:8px 0 10px"><b>Open position:</b> ${pos}</div>
+    <div style="margin:8px 0 10px"><b>Open trades (${ps.length}):</b> ${pos}</div>
     <div class="logbox">${(s.log||[]).join("\n")||"No activity yet."}</div>`;
   const cv=el.querySelector(".chart"); if(cv) drawChart(cv, s.prices, s.position);
   const lb=el.querySelector(".logbox"); if(lb) lb.scrollTop=lb.scrollHeight;

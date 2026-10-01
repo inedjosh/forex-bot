@@ -183,6 +183,7 @@ class LiveController:
     def state(self) -> dict:
         bal = 0.0
         pos = None
+        positions = []
         prices = []
         if self.broker is not None:
             try:
@@ -193,6 +194,10 @@ class LiveController:
                 pos = self.broker.position_info(self.instrument)
             except Exception:  # noqa: BLE001
                 pos = None
+            try:
+                positions = self.broker.open_positions()  # ALL open trades
+            except Exception:  # noqa: BLE001
+                positions = [pos] if pos else []
             try:
                 gran = env_str("GRANULARITY", "D")
                 candles = self.broker.get_candles(self.instrument, gran, 120)
@@ -211,5 +216,6 @@ class LiveController:
             "pnl": round(bal - self.start_balance, 2),
             "instrument": self.instrument,
             "position": pos,
+            "positions": positions,
             "log": list(self.logs)[-40:],
         }
