@@ -116,9 +116,21 @@ class LiveController:
             return
         try:
             from . import auth
+            from ..notify import send_telegram_to
             for t in self.broker.drain_closed_trades():
                 t.setdefault("instrument", self.instrument)
                 auth.add_trade(self.email, self.mode, t)
+                if self.telegram_chat_id:
+                    pnl = t.get("pnl") or 0.0
+                    outcome = "WON" if pnl > 0 else ("LOST" if pnl < 0 else "break-even")
+                    try:
+                        bal = self.broker.account_balance()
+                    except Exception:  # noqa: BLE001
+                        bal = 0.0
+                    send_telegram_to(
+                        self.telegram_chat_id,
+                        f"Trade closed ({outcome}): {t.get('side')} {t.get('instrument')}\n"
+                        f"P&L {pnl:+.2f}  |  balance {bal:,.2f}")
         except Exception:  # noqa: BLE001 — never let history writing break trading
             pass
 

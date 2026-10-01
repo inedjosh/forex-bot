@@ -277,6 +277,22 @@ def create_app():
         # via Telegram). Admins cannot set customer passwords.
         return jsonify({"ok": False, "error": "unknown action"}), 400
 
+    @app.get("/api/admin/platform-token")
+    def get_platform_token():
+        if not _is_admin():
+            return jsonify({"ok": False}), 403
+        return jsonify({"ok": True, "set": bool(env_str("TELEGRAM_BOT_TOKEN", ""))})
+
+    @app.post("/api/admin/platform-token")
+    def set_platform_token():
+        if not _is_admin():
+            return jsonify({"ok": False, "error": "admins only"}), 403
+        tok = (request.get_json(force=True) or {}).get("token", "").strip()
+        if not tok:
+            return jsonify({"ok": False, "error": "empty token"}), 400
+        update_env({"TELEGRAM_BOT_TOKEN": tok})  # saved to server .env (not git)
+        return jsonify({"ok": True})
+
     @app.get("/")
     def index():
         return _INDEX_HTML
@@ -714,6 +730,15 @@ _ADMIN_HTML = r"""<!doctype html>
   </div>
 
   <div class="card">
+    <h2>Platform Telegram bot</h2>
+    <div class="meta" style="margin-bottom:10px">The bot token (from @BotFather) used to send trade alerts &amp; reset codes to all users. Stored on the server only, never in code. <span id="tokStatus"></span></div>
+    <div class="row">
+      <div><label>Bot token</label><input id="platTok" placeholder="12345:AA... (leave blank to keep current)"/></div>
+      <div style="flex:0"><label>&nbsp;</label><button id="platTokSave">Save token</button></div>
+    </div>
+  </div>
+
+  <div class="card">
     <h2>Customers (<span id="count">0</span>)</h2>
     <div id="users"></div>
   </div>
@@ -774,6 +799,18 @@ async function activate(email){
   const r=await api("activate",{email, until:until||null}); toast(r.ok?"Activated":"Error"); loadUsers();
 }
 async function deactivate(email){ const r=await api("deactivate",{email}); toast(r.ok?"Deactivated":"Error"); loadUsers(); }
+
+async function loadTokenStatus(){
+  try{ const r=await (await fetch("/api/admin/platform-token")).json();
+    $("#tokStatus").innerHTML = r.set ? '<b style="color:#137333">token is set</b>' : '<b style="color:#cb3837">not set yet</b>';
+  }catch(e){}
+}
+$("#platTokSave").onclick=async ()=>{
+  const tok=$("#platTok").value.trim(); if(!tok){ toast("Enter a token"); return; }
+  const r=await (await fetch("/api/admin/platform-token",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({token:tok})})).json();
+  if(r.ok){ $("#platTok").value=""; toast("Token saved"); loadTokenStatus(); } else toast(r.error||"Error");
+};
+loadTokenStatus();
 loadUsers();
 </script>
 </body></html>
@@ -1398,21 +1435,33 @@ document.querySelectorAll(".tab").forEach(t=>t.onclick=()=>{
 });
 
 async function loadHistory(){
+  // Show the CURRENT open trade (if any) at the top, pulled from the live run.
+  let openHtml="";
+  try{
+    const st=await (await fetch("/api/live/state")).json();
+    const p=st.position;
+    if(p){ const uc=(p.unrealized||0)>=0?"good":"bad";
+      openHtml=`<div class="verdict" style="border-left-color:#137333">
+        <b>Open now:</b> ${p.side} ${p.units} ${st.instrument||""} @ ${p.entry},
+        stop ${p.stop}, target ${p.target??"none"},
+        <span class="${uc}">unrealized ${p.unrealized>=0?"+":""}${p.unrealized}</span></div>`;
+    } else if(st.running){ openHtml=`<div class="hint">No open trade right now (bot is running, waiting for a setup).</div>`; }
+  }catch(e){}
   const r=await (await fetch("/api/my-history")).json();
   const ts=r.trades||[];
   const wins=ts.filter(t=>(t.pnl||0)>0).length;
   const pnl=ts.reduce((a,t)=>a+(t.pnl||0),0);
   $("#histSummary").textContent = ts.length
     ? `${ts.length} trades, ${wins} winners, net ${pnl>=0?"+":""}${pnl.toFixed(2)}`
-    : "No trades yet, run Practice or Live to build history.";
-  if(!ts.length){ $("#histTable").innerHTML=""; return; }
+    : "No closed trades yet.";
+  if(!ts.length){ $("#histTable").innerHTML=openHtml; return; }
   let h="<table><tr><th>Closed</th><th>Mode</th><th>Pair</th><th>Side</th><th>Units</th><th>Entry</th><th>Exit</th><th>P&amp;L</th><th>Reason</th></tr>";
   ts.forEach(t=>{ const cls=(t.pnl||0)>=0?"good":"bad";
     h+=`<tr><td>${(t.closed_at||"").replace("T"," ").slice(0,16)}</td><td>${t.mode||""}</td>`+
        `<td>${t.instrument||""}</td><td>${t.side||""}</td><td>${t.units??""}</td>`+
        `<td>${t.entry??""}</td><td>${t.exit??""}</td>`+
        `<td class="${cls}">${(t.pnl>=0?"+":"")+(t.pnl??0)}</td><td>${t.exit_reason||t.reason||""}</td></tr>`; });
-  h+="</table>"; $("#histTable").innerHTML=h;
+  h+="</table>"; $("#histTable").innerHTML=openHtml+h;
 }
 $("#histRefresh").onclick=loadHistory;
 
