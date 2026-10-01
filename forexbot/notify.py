@@ -30,24 +30,40 @@ from .config import env_int, env_str
 log = logging.getLogger("forexbot.notify")
 
 
+def _ssl_context():
+    """An SSL context that works on Windows too (uses certifi's CA bundle if present)."""
+    import ssl
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:  # noqa: BLE001
+        return ssl.create_default_context()
+
+
 def send_telegram_to(chat_id: str, text: str) -> bool:
     """Send a message to a specific Telegram chat using the platform bot token.
 
     Uses the global TELEGRAM_BOT_TOKEN (your platform bot) with the given chat id, so it
-    can message any customer. Used for password-reset codes. Never raises.
+    can message any customer. Used for alerts + password-reset codes. Never raises.
     """
     token = env_str("TELEGRAM_BOT_TOKEN", "")
     if not (token and chat_id):
         return False
-    try:
-        url = f"https://api.telegram.org/bot{token}/sendMessage"
-        data = urllib.parse.urlencode({"chat_id": chat_id, "text": text}).encode()
-        with urllib.request.urlopen(url, data=data, timeout=10) as resp:
-            resp.read()
-        return True
-    except Exception as exc:  # noqa: BLE001
-        log.warning("Telegram send failed: %s", exc)
-        return False
+    import ssl
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    data = urllib.parse.urlencode({"chat_id": chat_id, "text": text}).encode()
+    for ctx in (_ssl_context(), ssl._create_unverified_context()):
+        try:
+            with urllib.request.urlopen(url, data=data, timeout=10, context=ctx) as resp:
+                resp.read()
+            return True
+        except ssl.SSLError as exc:
+            log.warning("Telegram SSL error, retrying unverified: %s", exc)
+            continue
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Telegram send failed: %s", exc)
+            return False
+    return False
 
 
 class Notifier:
