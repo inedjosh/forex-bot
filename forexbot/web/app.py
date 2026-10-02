@@ -1286,6 +1286,21 @@ async function load(){
   renderPresets();
   refreshFiles();
   opts($("#btStrategy"), STATE.strategies, STATE.config.STRATEGY);
+  resumeLive();  // if the bot is already running server-side, re-attach after refresh
+}
+
+// After a browser refresh the bot keeps running on the server; re-connect the UI to it
+// so the live panel, open trades and log show again instead of starting blank.
+async function resumeLive(){
+  try{
+    const s=await (await fetch("/api/live/state")).json();
+    if(s.running){
+      const mode = s.mode==="practice" ? "practice" : "live";
+      const tab = document.querySelector('.tab[data-mode="'+mode+'"]');
+      if(tab) tab.click();                 // switch to the running mode's tab
+      startPolling(mode==="practice" ? "pracPanel" : "livePanel");
+    }
+  }catch(e){}
 }
 
 function renderPresets(){
