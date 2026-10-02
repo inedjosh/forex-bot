@@ -34,31 +34,63 @@ _POLL_SECONDS = {
 }
 
 
+def _parse_instruments(instrument) -> List[str]:
+    """Accept 'EURUSD', 'EURUSD,GBPUSD', or a list -> clean list of symbols."""
+    if isinstance(instrument, (list, tuple)):
+        raw = list(instrument)
+    else:
+        raw = str(instrument or "").replace(";", ",").replace(" ", ",").split(",")
+    seen, out = set(), []
+    for s in raw:
+        s = s.strip().upper()
+        if s and s not in seen:
+            seen.add(s)
+            out.append(s)
+    return out or ["EURUSD"]
+
+
 class LiveTrader:
     def __init__(
         self,
         broker: Broker,
-        strategy: Strategy,
         risk_config: RiskConfig,
-        instrument: str,
+        instrument,                       # str, comma-separated str, or list
         granularity: str,
+        strategy: Optional[Strategy] = None,       # single-pair: one strategy object
+        strategy_name: Optional[str] = None,       # multi-pair: build one per pair
         history_count: int = 200,
         poll_seconds: Optional[float] = None,
         max_iterations: Optional[int] = None,
         dry_run: bool = False,
         telegram_chat_id: Optional[str] = None,
     ) -> None:
+        from ..strategies import get_strategy
         self.broker = broker
-        self.strategy = strategy
         self.risk = RiskManager(risk_config)
-        self.instrument = instrument
+        self.instruments = _parse_instruments(instrument)
+        self.instrument = self.instruments[0]      # primary (for chart/state compat)
         self.granularity = granularity
+        # One INDEPENDENT strategy instance per pair, so each keeps its own key levels.
+        if strategy_name:
+            self.strategies = {s: get_strategy(strategy_name) for s in self.instruments}
+        elif strategy is not None and len(self.instruments) == 1:
+            self.strategies = {self.instruments[0]: strategy}
+        elif strategy is not None:
+            # A single object was given but we have several pairs -> rebuild per pair
+            # from its registry name so they don't share state.
+            name = getattr(type(strategy), "_registry_name", None)
+            self.strategies = {s: (strategy if i == 0 else get_strategy(name))
+                               for i, s in enumerate(self.instruments)} if name else \
+                              {s: strategy for s in self.instruments}
+        else:
+            raise ValueError("LiveTrader needs strategy or strategy_name")
+        self.strategy = self.strategies[self.instrument]   # primary (compat)
         self.history_count = history_count
         self.poll_seconds = poll_seconds or _POLL_SECONDS.get(granularity, 60)
         self.max_iterations = max_iterations
         self.dry_run = dry_run
         self.telegram_chat_id = telegram_chat_id  # THIS user's own Telegram
-        self._last_candle_time: Optional[datetime] = None
+        self._last_candle_time: dict = {}          # per-instrument last acted candle
         self._halt_notified = False
 
     def _alert(self, message: str) -> None:
@@ -69,10 +101,11 @@ class LiveTrader:
     def run(self) -> None:
         mode = "DRY-RUN (no orders)" if self.dry_run else "LIVE"
         log.info("Starting %s | %s | %s %s | strategy=%s | poll=%ss | alerts=%s",
-                 mode, type(self.broker).__name__, self.instrument,
+                 mode, type(self.broker).__name__, ",".join(self.instruments),
                  self.granularity, self.strategy.name, self.poll_seconds,
                  "telegram" if self.telegram_chat_id else "none")
-        self.strategy.on_start()
+        for s in self.strategies.values():
+            s.on_start()
 
         iterations = 0
         while True:
@@ -91,58 +124,76 @@ class LiveTrader:
                 break
 
     def _cycle(self) -> None:
-        candles = self.broker.get_candles(
-            self.instrument, self.granularity, self.history_count
-        )
+        # Keep the risk manager's balance in sync with the real account (once/cycle).
+        try:
+            self.risk.balance = self.broker.account_balance()
+        except Exception:  # noqa: BLE001
+            pass
+        # Scan every pair the formula watches; trade whichever gives a setup.
+        for inst in self.instruments:
+            try:
+                self._scan_instrument(inst)
+            except Exception:  # keep scanning the others if one pair errors
+                log.exception("scan error on %s — continuing", inst)
+
+    def _scan_instrument(self, inst: str) -> None:
+        candles = self.broker.get_candles(inst, self.granularity, self.history_count)
         if len(candles) < 30:
             return
         latest = candles[-1]
 
-        # Only act once per completed candle.
-        if self._last_candle_time == latest.time:
+        # Only act once per completed candle, per pair.
+        if self._last_candle_time.get(inst) == latest.time:
             return
-        self._last_candle_time = latest.time
+        self._last_candle_time[inst] = latest.time
 
-        # Precompute indicators over the current window (cheap; ~history_count bars).
-        self.strategy.prepare(candles)
+        strategy = self.strategies[inst]
+        strategy.prepare(candles)  # precompute indicators over the window (cheap)
 
-        # Keep the risk manager's balance in sync with the real account.
-        self.risk.balance = self.broker.account_balance()
+        if self.broker.has_open_position(inst):
+            return  # one position per pair; broker manages its SL/TP
 
-        if self.broker.has_open_position(self.instrument):
-            return  # one position at a time; broker manages its SL/TP
-
-        halt = self.risk.halt_reason(latest.time.date())
+        halt = self.risk.halt_reason(latest.time.date())  # account-wide
         if halt:
             log.warning("Trading paused: %s", halt)
             if not self._halt_notified:
-                self._alert(f"{self.instrument}: trading paused for today, {halt}.")
+                self._alert(f"Trading paused for today, {halt}.")
                 self._halt_notified = True
             return
         self._halt_notified = False  # reset once a new day / no longer halted
 
-        signal = self.strategy.on_candle(latest, candles, None)
+        # Cap total simultaneous positions across all pairs.
+        cap = self.risk.config.max_open_positions
+        if cap and cap > 0:
+            try:
+                if len(self.broker.open_positions()) >= cap:
+                    return
+            except Exception:  # noqa: BLE001
+                pass
+
+        signal = strategy.on_candle(latest, candles, None)
         if signal is None:
             return
 
         order = self.risk.size_order(signal, latest.close)
         if order is None:
-            log.warning("Signal %s ignored: could not size safely.", signal.side.value)
+            log.warning("%s signal %s ignored: could not size safely.",
+                        inst, signal.side.value)
             return
 
         if self.dry_run:
-            log.info("[DRY-RUN] would %s %.0f units @ ~%.5f  sl=%.5f tp=%s  (%s)",
-                     order.side.value, order.units, latest.close, order.stop_loss,
+            log.info("[DRY-RUN] %s would %s %.0f units @ ~%.5f  sl=%.5f tp=%s  (%s)",
+                     inst, order.side.value, order.units, latest.close, order.stop_loss,
                      f"{order.take_profit:.5f}" if order.take_profit else "none",
                      order.reason)
             return
 
-        order_id = self.broker.place_order(self.instrument, order)
+        order_id = self.broker.place_order(inst, order)
         self.risk.on_trade_opened(latest.time.date())
-        log.info("Placed order %s: %s %.0f units (%s)",
-                 order_id, order.side.value, order.units, order.reason)
+        log.info("Placed order %s on %s: %s %.0f units (%s)",
+                 order_id, inst, order.side.value, order.units, order.reason)
         self._alert(
-            f"{self.instrument} {order.side.value} {order.units:.0f} units\n"
+            f"{inst} {order.side.value} {order.units:.0f} units\n"
             f"entry ~{latest.close:.5f}  stop {order.stop_loss:.5f}  "
             f"target {f'{order.take_profit:.5f}' if order.take_profit else 'none'}\n"
             f"reason: {order.reason}  (order {order_id})"

@@ -48,7 +48,8 @@ class LiveController:
         self.finished = False
         self.error: str | None = None
         self.broker = None
-        self.instrument = "EURUSD"
+        self.instrument = "EURUSD"      # display string (may be comma-separated)
+        self.instruments = ["EURUSD"]   # parsed list of pairs the bot scans
         self.start_balance = 0.0
         self.email = None  # set by the app so closed trades can be saved per user
         self.telegram_chat_id = None
@@ -95,7 +96,9 @@ class LiveController:
             self.error = str(exc)
             return False, str(exc)
 
+        from ..live.runner import _parse_instruments
         self.instrument = instrument or env_str("INSTRUMENT", "EURUSD")
+        self.instruments = _parse_instruments(self.instrument)
         try:
             self.start_balance = self.broker.account_balance()
         except Exception:  # noqa: BLE001
@@ -141,18 +144,25 @@ class LiveController:
     # ── the loop ─────────────────────────────────────────────────────────────
     def _run(self, is_sim: bool, tick: float) -> None:
         from ..live import LiveTrader
+        from ..live.runner import _parse_instruments
         try:
+            # Practice runs on a single synthetic/CSV series; live can scan many pairs.
+            instruments = ([self.instruments[0]] if is_sim else self.instruments)
+            rc = RiskConfig.from_env(starting_balance=self.start_balance)
+            if len(instruments) > 1 and (not rc.max_open_positions or rc.max_open_positions <= 1):
+                rc.max_open_positions = len(instruments)  # allow one position per pair
             trader = LiveTrader(
                 broker=self.broker,
-                strategy=get_strategy(env_str("STRATEGY", "crt")),
-                risk_config=RiskConfig.from_env(starting_balance=self.start_balance),
-                instrument=self.instrument,
+                strategy_name=env_str("STRATEGY", "crt"),
+                risk_config=rc,
+                instrument=instruments,
                 granularity=env_str("GRANULARITY", "D"),
                 dry_run=self.dry_run,
                 telegram_chat_id=self.telegram_chat_id,
             )
-            trader.strategy.on_start()
-            _log.info("Started %s mode on %s  (%s)", self.mode, self.instrument,
+            for s in trader.strategies.values():
+                s.on_start()
+            _log.info("Started %s mode on %s  (%s)", self.mode, ", ".join(instruments),
                       "DRY-RUN, no orders" if self.dry_run else "placing orders")
 
             while not self._stop.is_set():
@@ -190,17 +200,18 @@ class LiveController:
                 bal = self.broker.account_balance()
             except Exception:  # noqa: BLE001
                 bal = self.start_balance
+            primary = self.instruments[0] if self.instruments else self.instrument
             try:
-                pos = self.broker.position_info(self.instrument)
+                pos = self.broker.position_info(primary)
             except Exception:  # noqa: BLE001
                 pos = None
             try:
-                positions = self.broker.open_positions()  # ALL open trades
+                positions = self.broker.open_positions()  # ALL open trades (every pair)
             except Exception:  # noqa: BLE001
                 positions = [pos] if pos else []
             try:
                 gran = env_str("GRANULARITY", "D")
-                candles = self.broker.get_candles(self.instrument, gran, 120)
+                candles = self.broker.get_candles(primary, gran, 120)
                 prices = [round(c.close, 5) for c in candles]
             except Exception:  # noqa: BLE001
                 prices = []

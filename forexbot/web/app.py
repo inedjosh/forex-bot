@@ -789,7 +789,7 @@ async function loadUsers(){
       <div class="meta">The customer enters their own MT5 details. On file, server: ${u.mt5_server||"-"} , instrument: ${u.instrument||"-"} , telegram: ${u.telegram_chat_id||"-"} , expires: ${u.expires_at||"-"}</div>
       <details><summary>Manage</summary>
         <div class="grid">
-          <div><label>Instrument</label><input id="in_${u.email}" value="${esc(u.instrument)}" placeholder="EURUSD"/></div>
+          <div><label>Pairs (1-5, comma-separated)</label><input id="in_${u.email}" value="${esc(u.instrument)}" placeholder="EURUSD,GBPUSD,USDJPY,AUDUSD,USDCAD"/></div>
           <div><label>Telegram chat id (alerts + reset)</label><input id="tg_${u.email}" value="${esc(u.telegram_chat_id)}" placeholder="e.g. 987654321"/></div>
           <div><label>Subdomain (for go-live)</label><input id="sd_${u.email}" value="${esc(u.subdomain)}" placeholder="e.g. jane"/></div>
           <div><label>Notes (private)</label><input id="nt_${u.email}" value="${esc(u.notes)}"/></div>
@@ -1122,6 +1122,9 @@ _INDEX_HTML = r"""<!doctype html>
         <div><label>Telegram chat id
           <span class="info" data-tip="A number (not your phone or @username) so the bot can send you trade alerts and password-reset codes.">i</span>
         </label><input id="mb_telegram"/></div>
+        <div><label>Pairs to trade
+          <span class="info" data-tip="The pair(s) the bot scans for setups. Enter one (EURUSD) or up to five, comma-separated (EURUSD,GBPUSD,USDJPY,AUDUSD,USDCAD). The bot checks each one and trades whichever gives a setup — one position per pair.">i</span>
+        </label><input id="mb_instrument" placeholder="EURUSD,GBPUSD,USDJPY,AUDUSD,USDCAD"/></div>
       </div>
       <div class="banner" style="margin-top:12px">
         <b>Where to find your MT5 details</b>
@@ -1514,6 +1517,7 @@ async function loadAccount(){
     const me=await (await fetch("/api/me")).json();
     $("#mb_login").value=s.mt5_login||""; $("#mb_server").value=s.mt5_server||"";
     $("#mb_telegram").value=s.telegram_chat_id||"";
+    $("#mb_instrument").value=s.instrument||"";
     $("#mb_password").placeholder = s.has_password ? "(saved, leave blank to keep)" : "your MT5 password";
     const sub = s.active ? '<b style="color:#137333">Active</b>'
                          : '<b style="color:#cb3837">Inactive</b>';
@@ -1538,7 +1542,7 @@ $("#mbSave").onclick=async ()=>{
   const b=$("#mbSave"); busy(b,"Saving...");
   try{
     const body={mt5_login:$("#mb_login").value, mt5_server:$("#mb_server").value,
-      telegram_chat_id:$("#mb_telegram").value};
+      telegram_chat_id:$("#mb_telegram").value, instrument:$("#mb_instrument").value};
     const pw=$("#mb_password").value; if(pw) body.mt5_password=pw;
     await fetch("/api/my-broker",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
     $("#mbStatus").textContent="Saved."; toast("Broker details saved"); loadAccount();
