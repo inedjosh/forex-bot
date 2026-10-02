@@ -30,6 +30,28 @@ _DATA_DIR = _ROOT / "data"
 # The formula settings the UI exposes as a plain form (no code), grouped for clarity.
 # Each: key, group, label, kind (int/float/choice/bool), default, help, [options].
 SETTINGS = [
+    # ── Strategy & timeframe ──
+    {"key": "STRATEGY", "group": "Strategy", "label": "Trading strategy", "kind": "choice",
+     "options": ["crt", "ashape"], "default": "crt",
+     "help": "'crt' = Candle Range Theory (best on Daily). 'ashape' = your A-Shape/V-Shape key-level model (best on H1 with higher-TF key levels)."},
+    {"key": "GRANULARITY", "group": "Strategy", "label": "Timeframe", "kind": "choice",
+     "options": ["M5", "M15", "M30", "H1", "H4", "D"], "default": "D",
+     "help": "The candle size the bot trades on. CRT -> D (daily). Your A-Shape model -> H1."},
+    # ── A-Shape / V-Shape Key Level (your model) ──
+    {"key": "KL_HTF_MULTIPLE", "group": "Key Level model", "label": "Key-level timeframe (x base)", "kind": "int", "default": 2,
+     "help": "Key levels are read from this many base candles grouped together. On H1: 2 = 2H key levels, 4 = 4H."},
+    {"key": "KL_RISK_REWARD", "group": "Key Level model", "label": "Reward:risk", "kind": "float", "default": 2.0,
+     "help": "Target vs stop. 2 = aim to win twice the risk (works best around 2 for this model)."},
+    {"key": "KL_STOP_BUFFER_PCT", "group": "Key Level model", "label": "Stop buffer (%)", "kind": "float", "default": 0.05,
+     "help": "Extra cushion beyond the key level for the stop, as a % of price."},
+    {"key": "KL_MAX_AGE", "group": "Key Level model", "label": "Key-level lifespan (bars)", "kind": "int", "default": 120,
+     "help": "How many base candles a key level stays valid, waiting for price to return."},
+    {"key": "KL_REQUIRE_ENGULFING", "group": "Key Level model", "label": "Require engulfing?", "kind": "bool", "default": True,
+     "help": "Wait for a bearish (sell) / bullish (buy) engulfing candle to confirm, as in your model. Recommended: Yes."},
+    {"key": "KL_TRADE_SELLS", "group": "Key Level model", "label": "Take A-Shape sells?", "kind": "bool", "default": True,
+     "help": "Trade the A-Shape (bull-then-bear) supply zones as sells."},
+    {"key": "KL_TRADE_BUYS", "group": "Key Level model", "label": "Take V-Shape buys?", "kind": "bool", "default": True,
+     "help": "Trade the mirror V-Shape (bear-then-bull) demand zones as buys."},
     # ── CRT setup ──
     {"key": "CRT_RANGE_LOOKBACK", "group": "CRT setup", "label": "Range candles", "kind": "int", "default": 1,
      "help": "How many prior candles form the range whose high/low get swept. 1 = the single previous candle (classic CRT)."},
